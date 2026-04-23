@@ -18,6 +18,27 @@ const TOOLS = [
       },
     },
   },
+  {
+    type: "function" as const,
+    function: {
+      name: "Write",
+      description: "Write content to a file",
+      parameters: {
+        type: "object",
+        properties: {
+          file_path: {
+            type: "string",
+            description: "The path to the file",
+          },
+          content: {
+            type: "string",
+            description: "The content to write",
+          },
+        },
+        required: ["file_path", "content"] as const,
+      },
+    },
+  },
 ];
 
 const MODEL = "anthropic/claude-haiku-4.5";
@@ -50,6 +71,11 @@ async function handleToolCall(call: OpenAI.ChatCompletionMessageToolCall): Promi
     const args = JSON.parse(call.function.arguments) as { file_path: string };
     const content = await Bun.file(args.file_path).text();
     return { role: "tool", tool_call_id: call.id, content };
+  }
+  if (call.function.name === "Write") {
+    const args = JSON.parse(call.function.arguments) as { file_path: string; content: string };
+    await Bun.write(args.file_path, args.content);
+    return { role: "tool", tool_call_id: call.id, content: `Wrote to ${args.file_path}` };
   }
   throw new Error(`Unknown tool: ${call.function.name}`);
 }

@@ -45,39 +45,34 @@ async function main() {
   
   
   while (true) {
-
     const response = await client.chat.completions.create({
       model: "anthropic/claude-haiku-4.5",
       messages: messages,
       tools: tools,
     });
-    
 
-  if (!response.choices || response.choices.length === 0) {
-    throw new Error("no choices in response");
-  }
-
-  messages.push(response.choices[0].message);
-
-  const toolCalls = response.choices[0].message.tool_calls;
-
-  if (toolCalls && toolCalls.length > 0) {
-    if (toolCalls[0].function.name === "Read") {
-      const functionArgs = JSON.parse(toolCalls[0].function.arguments);
-      const filePath = functionArgs.file_path;
-      const fileContent = await Bun.file(filePath).text();
-      messages.push({ role: "user", tool_call_id: toolCalls[0].id, content: fileContent });
-    } else {
-      console.error("No tool calls for this command", toolCalls);
+    if (!response.choices || response.choices.length === 0) {
+      throw new Error("no choices in response");
     }
-  } else {
-    // No tool calls, just print the response
-    console.log(response.choices[0].message.content);
-  }
 
-  // You can use print statements as follows for debugging, they'll be visible when running tests.
-  console.error("Logs from your program will appear here!");
-}
+    const choice = response.choices[0];
+    messages.push({ role: "assistant", content: choice.message.content || "" });
+
+    const toolCalls = choice.message.tool_calls;
+
+    if (toolCalls && toolCalls.length > 0) {
+      for (const call of toolCalls) {
+        if (call.function.name === "Read") {
+          const args = JSON.parse(call.function.arguments);
+          const content = await Bun.file(args.file_path).text();
+          messages.push({ role: "tool", tool_call_id: call.id, content });
+        }
+      }
+    } else {
+      console.log(choice.message.content);
+      break;
+    }
+  }
 
 }
 

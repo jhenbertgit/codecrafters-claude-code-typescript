@@ -71,4 +71,6 @@ async function main() {
   console.error("Logs from your program will appear here!");
 }
 
+}
+
 main();

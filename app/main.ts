@@ -39,6 +39,23 @@ const TOOLS = [
       },
     },
   },
+  {
+    type: "function" as const,
+    function: {
+      name: "Bash",
+      description: "Execute a bash command and return the output",
+      parameters: {
+        type: "object",
+        properties: {
+          command: {
+            type: "string",
+            description: "The bash command to execute",
+          },
+        },
+        required: ["command"] as const,
+      },
+    },
+  },
 ];
 
 const MODEL = "anthropic/claude-haiku-4.5";
@@ -76,6 +93,17 @@ async function handleToolCall(call: OpenAI.ChatCompletionMessageToolCall): Promi
     const args = JSON.parse(call.function.arguments) as { file_path: string; content: string };
     await Bun.write(args.file_path, args.content);
     return { role: "tool", tool_call_id: call.id, content: `Wrote to ${args.file_path}` };
+  }
+  if (call.function.name === "Bash") {
+    const args = JSON.parse(call.function.arguments) as { command: string };
+    const proc = Bun.spawn(["sh", "-c", args.command], {
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const output = await new Response(proc.stdout).text();
+    const exitCode = await proc.exited;
+    const content = exitCode === 0 ? output : `Command failed with exit code ${exitCode}\n${output}`;
+    return { role: "tool", tool_call_id: call.id, content };
   }
   throw new Error(`Unknown tool: ${call.function.name}`);
 }

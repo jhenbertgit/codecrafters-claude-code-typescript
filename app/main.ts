@@ -24,7 +24,7 @@ function stopLoading(): void {
   }
 }
 
-const MODEL = "z-ai/glm-4.5-air:free";
+const MODEL = "anthropic/claude-haiku-4.5";
 
 const SCHEMAS = {
   Read: {

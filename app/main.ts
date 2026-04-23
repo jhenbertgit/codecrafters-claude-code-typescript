@@ -39,7 +39,7 @@ async function main() {
       ];
   
   
-  const messages: Array<{ role: string; content: string; tool_call_id?: string }> = [
+  const messages: Array<{ role: string; content: string; tool_call_id?: string; tool_calls?: Array<{ id: string; function: { name: string; arguments: string } }> }> = [
     { role: "user", content: prompt }
   ];
   
@@ -56,7 +56,11 @@ async function main() {
     }
 
     const choice = response.choices[0];
-    messages.push({ role: "assistant", content: choice.message.content || "" });
+    messages.push({ 
+  role: "assistant", 
+  content: choice.message.content || "",
+  tool_calls: choice.message.tool_calls
+});
 
     const toolCalls = choice.message.tool_calls;
 

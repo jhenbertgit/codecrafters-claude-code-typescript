@@ -6,6 +6,7 @@
     "dev": "bun run app/main.ts"
   },
   "dependencies": {
+    "glob": "^13.0.6",
     "openai": "^6.16.0"
   },
   "devDependencies": {

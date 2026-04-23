@@ -1,83 +1,95 @@
 import OpenAI from "openai";
 
-async function main() {
-  const [, , flag, prompt] = process.argv;
-  const apiKey = process.env.OPENROUTER_API_KEY;
-  const baseURL =
-    process.env.OPENROUTER_BASE_URL ?? "https://openrouter.ai/api/v1";
+const TOOLS = [
+  {
+    type: "function" as const,
+    function: {
+      name: "Read",
+      description: "Read the contents of a file",
+      parameters: {
+        type: "object",
+        properties: {
+          file_path: {
+            type: "string",
+            description: "The path to the file",
+          },
+        },
+        required: ["file_path"] as const,
+      },
+    },
+  },
+];
 
-  if (!apiKey) {
-    throw new Error("OPENROUTER_API_KEY is not set");
-  }
+const MODEL = "anthropic/claude-haiku-4.5";
+
+type Message = {
+  role: string;
+  content: string;
+  tool_call_id?: string;
+  tool_calls?: OpenAI.ChatCompletionMessageToolCall[];
+};
+
+function validateEnv(): { apiKey: string; baseURL: string } {
+  const apiKey = process.env.OPENROUTER_API_KEY;
+  if (!apiKey) throw new Error("OPENROUTER_API_KEY is not set");
+
+  const baseURL = process.env.OPENROUTER_BASE_URL ?? "https://openrouter.ai/api/v1";
+  return { apiKey, baseURL };
+}
+
+function parseArgs(): { flag: string; prompt: string } {
+  const [, , flag, prompt] = process.argv;
   if (flag !== "-p" || !prompt) {
     throw new Error("error: -p flag is required");
   }
+  return { flag, prompt };
+}
 
-  const client = new OpenAI({
-    apiKey: apiKey,
-    baseURL: baseURL,
-  });
+async function handleToolCall(call: OpenAI.ChatCompletionMessageToolCall): Promise<Message> {
+  if (call.function.name === "Read") {
+    const args = JSON.parse(call.function.arguments) as { file_path: string };
+    const content = await Bun.file(args.file_path).text();
+    return { role: "tool", tool_call_id: call.id, content };
+  }
+  throw new Error(`Unknown tool: ${call.function.name}`);
+}
 
-  const tools = [
-        {
-          type: "function",
-          function: {
-            name: "Read",
-            description: "Read the contents of a file",
-            parameters: {
-              type: "object",
-              properties: {
-                file_path: {
-                  type: "string",
-                  description: "The path to the file",
-                },
-              },
-              required: ["file_path"],
-            },
-          },
-        },
-      ];
-  
-  
-  const messages: Array<{ role: string; content: string; tool_call_id?: string; tool_calls?: Array<{ id: string; function: { name: string; arguments: string } }> }> = [
-    { role: "user", content: prompt }
-  ];
-  
-  
+async function chatLoop(client: OpenAI, initialPrompt: string): Promise<void> {
+  const messages: Message[] = [{ role: "user", content: initialPrompt }];
+
   while (true) {
     const response = await client.chat.completions.create({
-      model: "anthropic/claude-haiku-4.5",
-      messages: messages,
-      tools: tools,
+      model: MODEL,
+      messages: messages as unknown as OpenAI.ChatCompletionMessageParam[],
+      tools: TOOLS,
     });
 
-    if (!response.choices || response.choices.length === 0) {
-      throw new Error("no choices in response");
-    }
-
     const choice = response.choices[0];
-    messages.push({ 
-  role: "assistant", 
-  content: choice.message.content || "",
-  tool_calls: choice.message.tool_calls
-});
+    if (!choice) throw new Error("no choices in response");
 
-    const toolCalls = choice.message.tool_calls;
+    messages.push({
+      role: "assistant",
+      content: choice.message.content || "",
+      tool_calls: choice.message.tool_calls,
+    });
 
-    if (toolCalls && toolCalls.length > 0) {
-      for (const call of toolCalls) {
-        if (call.function.name === "Read") {
-          const args = JSON.parse(call.function.arguments);
-          const content = await Bun.file(args.file_path).text();
-          messages.push({ role: "tool", tool_call_id: call.id, content });
-        }
+    if (choice.message.tool_calls?.length) {
+      for (const call of choice.message.tool_calls) {
+        messages.push(await handleToolCall(call));
       }
     } else {
       console.log(choice.message.content);
       break;
     }
   }
+}
 
+async function main(): Promise<void> {
+  const { apiKey, baseURL } = validateEnv();
+  const { prompt } = parseArgs();
+
+  const client = new OpenAI({ apiKey, baseURL });
+  await chatLoop(client, prompt);
 }
 
 main();

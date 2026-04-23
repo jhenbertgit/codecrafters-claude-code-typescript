@@ -39,7 +39,9 @@ async function main() {
       ];
   
   
-  const messages: Array<{ role: string; content: string }> = [];
+  const messages: Array<{ role: string; content: string; tool_call_id?: string }> = [
+    { role: "user", content: prompt }
+  ];
   
   
   while (true) {
@@ -55,7 +57,7 @@ async function main() {
     throw new Error("no choices in response");
   }
 
-  messages.push(...response.choices[0].message);
+  messages.push(response.choices[0].message);
 
   const toolCalls = response.choices[0].message.tool_calls;
 
@@ -64,7 +66,7 @@ async function main() {
       const functionArgs = JSON.parse(toolCalls[0].function.arguments);
       const filePath = functionArgs.file_path;
       const fileContent = await Bun.file(filePath).text();
-      messages.push({ role: "user", content: fileContent });
+      messages.push({ role: "user", tool_call_id: toolCalls[0].id, content: fileContent });
     } else {
       console.error("No tool calls for this command", toolCalls);
     }

@@ -25,7 +25,7 @@ async function main() {
       {
         type: "function",
         function: {
-          name: "read",
+          name: "Read",
           description: "Read the contents of a file",
           parameters: {
             type: "object",
@@ -49,7 +49,7 @@ async function main() {
   const toolCalls = response.choices[0].message.tool_calls;
 
   if (toolCalls && toolCalls.length > 0) {
-    if (toolCalls[0].function.name === "read") {
+    if (toolCalls[0].function.name === "Read") {
       const functionArgs = JSON.parse(toolCalls[0].function.arguments);
       const filePath = functionArgs.file_path;
       const fileContent = await Bun.file(filePath).text();
@@ -57,13 +57,13 @@ async function main() {
     } else {
       console.error("No tool calls for this command", toolCalls);
     }
+  } else {
+    // No tool calls, just print the response
+    console.log(response.choices[0].message.content);
   }
 
   // You can use print statements as follows for debugging, they'll be visible when running tests.
   console.error("Logs from your program will appear here!");
-
-  // TODO: Uncomment the lines below to pass the first stage
-  console.log(response.choices[0].message.content);
 }
 
 main();

@@ -18,12 +18,7 @@ async function main() {
     baseURL: baseURL,
   });
 
-  while (true) {
-
-    const response = await client.chat.completions.create({
-      model: "anthropic/claude-haiku-4.5",
-      messages: [{ role: "user", content: prompt }],
-      tools: [
+  const tools = [
         {
           type: "function",
           function: {
@@ -41,7 +36,18 @@ async function main() {
             },
           },
         },
-      ],
+      ];
+  
+  
+  const messages: Array<{ role: string; content: string }> = [];
+  
+  
+  while (true) {
+
+    const response = await client.chat.completions.create({
+      model: "anthropic/claude-haiku-4.5",
+      messages: messages,
+      tools: tools,
     });
     
 
@@ -49,7 +55,7 @@ async function main() {
     throw new Error("no choices in response");
   }
 
-  const messages = [...response.choices[0].message];
+  messages.push(...response.choices[0].message);
 
   const toolCalls = response.choices[0].message.tool_calls;
 

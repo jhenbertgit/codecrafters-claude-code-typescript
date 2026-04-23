@@ -1,64 +1,52 @@
 import OpenAI from "openai";
 
-const TOOLS = [
-  {
-    type: "function" as const,
-    function: {
-      name: "Read",
-      description: "Read the contents of a file",
-      parameters: {
-        type: "object",
-        properties: {
-          file_path: {
-            type: "string",
-            description: "The path to the file",
-          },
-        },
-        required: ["file_path"] as const,
-      },
+const MODEL = "anthropic/claude-haiku-4.5";
+
+const SCHEMAS = {
+  Read: {
+    type: "object" as const,
+    properties: {
+      file_path: { type: "string", description: "The path to the file" },
     },
+    required: ["file_path"] as const,
+  },
+  Write: {
+    type: "object" as const,
+    properties: {
+      file_path: { type: "string", description: "The path to the file" },
+      content: { type: "string", description: "The content to write" },
+    },
+    required: ["file_path", "content"] as const,
+  },
+  Bash: {
+    type: "object" as const,
+    properties: {
+      command: { type: "string", description: "The bash command to execute" },
+    },
+    required: ["command"] as const,
+  },
+} as const;
+
+type ToolArgs = {
+  Read: { file_path: string };
+  Write: { file_path: string; content: string };
+  Bash: { command: string };
+};
+
+const TOOLS: OpenAI.ChatCompletionTool[] = [
+  {
+    type: "function",
+    function: { name: "Read", description: "Read the contents of a file", parameters: SCHEMAS.Read },
   },
   {
-    type: "function" as const,
-    function: {
-      name: "Write",
-      description: "Write content to a file",
-      parameters: {
-        type: "object",
-        properties: {
-          file_path: {
-            type: "string",
-            description: "The path to the file",
-          },
-          content: {
-            type: "string",
-            description: "The content to write",
-          },
-        },
-        required: ["file_path", "content"] as const,
-      },
-    },
+    type: "function",
+    function: { name: "Write", description: "Write content to a file", parameters: SCHEMAS.Write },
   },
   {
-    type: "function" as const,
-    function: {
-      name: "Bash",
-      description: "Execute a bash command and return the output",
-      parameters: {
-        type: "object",
-        properties: {
-          command: {
-            type: "string",
-            description: "The bash command to execute",
-          },
-        },
-        required: ["command"] as const,
-      },
-    },
+    type: "function",
+    function: { name: "Bash", description: "Execute a bash command and return the output", parameters: SCHEMAS.Bash },
   },
 ];
-
-const MODEL = "anthropic/claude-haiku-4.5";
 
 type Message = {
   role: string;
@@ -67,15 +55,57 @@ type Message = {
   tool_calls?: OpenAI.ChatCompletionMessageToolCall[];
 };
 
+type ToolName = keyof ToolArgs;
+
+function parseArgs<T extends ToolName>(
+  name: T,
+  args: string
+): ToolArgs[T] {
+  const parsed = JSON.parse(args);
+  const schema = SCHEMAS[name];
+  for (const key of schema.required) {
+    if (!(key in parsed)) {
+      throw new Error(`Missing required argument: ${key}`);
+    }
+  }
+  return parsed as ToolArgs[T];
+}
+
+async function execTool(name: ToolName, args: string): Promise<string> {
+  switch (name) {
+    case "Read": {
+      const { file_path } = parseArgs("Read", args);
+      return await Bun.file(file_path).text();
+    }
+    case "Write": {
+      const { file_path, content } = parseArgs("Write", args);
+      await Bun.write(file_path, content);
+      return `Wrote to ${file_path}`;
+    }
+    case "Bash": {
+      const { command } = parseArgs("Bash", args);
+      const proc = Bun.spawn(["sh", "-c", command], { stdout: "pipe", stderr: "pipe" });
+      const output = await new Response(proc.stdout).text();
+      const err = await new Response(proc.stderr).text();
+      const exitCode = await proc.exited;
+      if (exitCode === 0) return output;
+      throw new Error(`Command failed with exit code ${exitCode}\n${output}${err}`);
+    }
+    default: {
+      const _exhaustive: never = name;
+      throw new Error(`Unknown tool: ${_exhaustive}`);
+    }
+  }
+}
+
 function validateEnv(): { apiKey: string; baseURL: string } {
   const apiKey = process.env.OPENROUTER_API_KEY;
   if (!apiKey) throw new Error("OPENROUTER_API_KEY is not set");
-
   const baseURL = process.env.OPENROUTER_BASE_URL ?? "https://openrouter.ai/api/v1";
   return { apiKey, baseURL };
 }
 
-function parseArgs(): { flag: string; prompt: string } {
+function parseArgsCli(): { flag: string; prompt: string } {
   const [, , flag, prompt] = process.argv;
   if (flag !== "-p" || !prompt) {
     throw new Error("error: -p flag is required");
@@ -84,28 +114,13 @@ function parseArgs(): { flag: string; prompt: string } {
 }
 
 async function handleToolCall(call: OpenAI.ChatCompletionMessageToolCall): Promise<Message> {
-  if (call.function.name === "Read") {
-    const args = JSON.parse(call.function.arguments) as { file_path: string };
-    const content = await Bun.file(args.file_path).text();
+  const { name, arguments: args } = call.function;
+  try {
+    const content = await execTool(name as ToolName, args);
     return { role: "tool", tool_call_id: call.id, content };
+  } catch (err) {
+    return { role: "tool", tool_call_id: call.id, content: String((err as Error).message) };
   }
-  if (call.function.name === "Write") {
-    const args = JSON.parse(call.function.arguments) as { file_path: string; content: string };
-    await Bun.write(args.file_path, args.content);
-    return { role: "tool", tool_call_id: call.id, content: `Wrote to ${args.file_path}` };
-  }
-  if (call.function.name === "Bash") {
-    const args = JSON.parse(call.function.arguments) as { command: string };
-    const proc = Bun.spawn(["sh", "-c", args.command], {
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const output = await new Response(proc.stdout).text();
-    const exitCode = await proc.exited;
-    const content = exitCode === 0 ? output : `Command failed with exit code ${exitCode}\n${output}`;
-    return { role: "tool", tool_call_id: call.id, content };
-  }
-  throw new Error(`Unknown tool: ${call.function.name}`);
 }
 
 async function chatLoop(client: OpenAI, initialPrompt: string): Promise<void> {
@@ -121,27 +136,27 @@ async function chatLoop(client: OpenAI, initialPrompt: string): Promise<void> {
     const choice = response.choices[0];
     if (!choice) throw new Error("no choices in response");
 
-    messages.push({
-      role: "assistant",
-      content: choice.message.content || "",
+    const assistantMsg = {
+      role: "assistant" as const,
+      content: choice.message.content ?? "",
       tool_calls: choice.message.tool_calls,
-    });
+    };
+    messages.push(assistantMsg);
 
-    if (choice.message.tool_calls?.length) {
-      for (const call of choice.message.tool_calls) {
-        messages.push(await handleToolCall(call));
-      }
-    } else {
-      console.log(choice.message.content);
-      break;
+    if (!choice.message.tool_calls?.length) {
+      console.log(assistantMsg.content);
+      return;
+    }
+
+    for (const call of choice.message.tool_calls) {
+      messages.push(await handleToolCall(call));
     }
   }
 }
 
 async function main(): Promise<void> {
   const { apiKey, baseURL } = validateEnv();
-  const { prompt } = parseArgs();
-
+  const { prompt } = parseArgsCli();
   const client = new OpenAI({ apiKey, baseURL });
   await chatLoop(client, prompt);
 }

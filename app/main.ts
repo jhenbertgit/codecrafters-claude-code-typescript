@@ -18,33 +18,38 @@ async function main() {
     baseURL: baseURL,
   });
 
-  const response = await client.chat.completions.create({
-    model: "anthropic/claude-haiku-4.5",
-    messages: [{ role: "user", content: prompt }],
-    tools: [
-      {
-        type: "function",
-        function: {
-          name: "Read",
-          description: "Read the contents of a file",
-          parameters: {
-            type: "object",
-            properties: {
-              file_path: {
-                type: "string",
-                description: "The path to the file",
+  while (true) {
+
+    const response = await client.chat.completions.create({
+      model: "anthropic/claude-haiku-4.5",
+      messages: [{ role: "user", content: prompt }],
+      tools: [
+        {
+          type: "function",
+          function: {
+            name: "Read",
+            description: "Read the contents of a file",
+            parameters: {
+              type: "object",
+              properties: {
+                file_path: {
+                  type: "string",
+                  description: "The path to the file",
+                },
               },
+              required: ["file_path"],
             },
-            required: ["file_path"],
           },
         },
-      },
-    ],
-  });
+      ],
+    });
+    
 
   if (!response.choices || response.choices.length === 0) {
     throw new Error("no choices in response");
   }
+
+  const messages = [...response.choices[0].message];
 
   const toolCalls = response.choices[0].message.tool_calls;
 
@@ -53,7 +58,7 @@ async function main() {
       const functionArgs = JSON.parse(toolCalls[0].function.arguments);
       const filePath = functionArgs.file_path;
       const fileContent = await Bun.file(filePath).text();
-      process.stdout.write(fileContent);
+      messages.push({ role: "user", content: fileContent });
     } else {
       console.error("No tool calls for this command", toolCalls);
     }
